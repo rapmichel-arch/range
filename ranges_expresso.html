@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ranges Expresso</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+        
+        .controls { display: flex; gap: 15px; flex-wrap: wrap; margin-bottom: 20px; align-items: flex-end; }
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        .control-group label { font-size: 12px; color: #888; }
+        .control-group select { padding: 8px 12px; border-radius: 5px; border: none; background: #16213e; color: #eee; cursor: pointer; min-width: 120px; }
+        .control-group.hidden { display: none; }
+        
+        .scenario-info { background: #16213e; padding: 10px 15px; border-radius: 5px; margin-bottom: 20px; font-size: 13px; color: #aaa; }
+        
+        .grid { display: grid; grid-template-columns: repeat(13, 1fr); gap: 2px; max-width: 650px; }
+        .cell { 
+            aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font-size: 11px; font-weight: bold; cursor: pointer; border-radius: 3px; position: relative;
+            transition: transform 0.1s;
+        }
+        .cell:hover { transform: scale(1.1); z-index: 10; }
+        
+        .fold { background: #e74c3c; }
+        .limp { background: #3498db; }
+        .raise2x { background: #2ecc71; }
+        .raise6x { background: #f39c12; }
+        .shove { background: #9b59b6; }
+        .call { background: #1abc9c; }
+        
+        .legend { display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+        .legend-item.hidden { display: none; }
+        .legend-color { width: 20px; height: 20px; border-radius: 3px; }
+        
+        .popup {
+            display: none; position: fixed; background: #16213e; border-radius: 8px; padding: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5); z-index: 100; min-width: 150px;
+        }
+        .popup.active { display: block; }
+        .popup h4 { margin-bottom: 10px; text-align: center; }
+        .popup-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; }
+        .popup-bar { height: 8px; background: #333; border-radius: 4px; margin-top: 3px; overflow: hidden; }
+        .popup-fill { height: 100%; border-radius: 4px; }
+        
+        .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 50; }
+        .overlay.active { display: block; }
+    </style>
+</head>
+<body>
+    <h1 style="margin-bottom: 20px;">Ranges Expresso</h1>
+    
+    <div class="controls">
+        <!-- Sélection joueurs -->
+        <div class="control-group">
+            <label>Joueurs</label>
+            <select id="players">
+                <option value="3">3 joueurs</option>
+                <option value="2">Heads-Up</option>
+            </select>
+        </div>
+        
+        <!-- Sélection position -->
+        <div class="control-group">
+            <label>Ma position</label>
+            <select id="myPos"></select>
+        </div>
+        
+        <!-- Action BTN (visible si SB ou BB en 3-way) -->
+        <div class="control-group hidden" id="btnActionGroup">
+            <label>Action BTN</label>
+            <select id="btnAction">
+                <option value="fold">Fold</option>
+                <option value="limp">Limp</option>
+                <option value="raise2x">Raise 2x</option>
+                <option value="shove">Shove</option>
+            </select>
+        </div>
+        
+        <!-- Action SB (visible si BB en 3-way) -->
+        <div class="control-group hidden" id="sbActionGroup">
+            <label>Action SB</label>
+            <select id="sbAction"></select>
+        </div>
+        
+        <!-- Action SB pour HU (visible si BB en HU) -->
+        <div class="control-group hidden" id="sbActionHUGroup">
+            <label>Action SB</label>
+            <select id="sbActionHU">
+                <option value="limp">Limp</option>
+                <option value="raise2x">Raise 2x</option>
+                <option value="shove">Shove</option>
+            </select>
+        </div>
+        
+        <!-- Profondeur -->
+        <div class="control-group">
+            <label>Profondeur (BB)</label>
+            <select id="depth"></select>
+        </div>
+    </div>
+    
+    <div class="scenario-info" id="scenarioInfo"></div>
+    
+    <!-- Légende des actions -->
+    <div class="legend" id="legend">
+        <div class="legend-item" data-action="fold"><div class="legend-color fold"></div>Fold</div>
+        <div class="legend-item" data-action="limp"><div class="legend-color limp"></div>Limp</div>
+        <div class="legend-item" data-action="raise2x"><div class="legend-color raise2x"></div>Raise 2x</div>
+        <div class="legend-item" data-action="raise6x"><div class="legend-color raise6x"></div>Raise 6x</div>
+        <div class="legend-item" data-action="shove"><div class="legend-color shove"></div>Shove</div>
+        <div class="legend-item" data-action="call"><div class="legend-color call"></div>Call</div>
+    </div>
+    
+    <div class="grid" id="grid"></div>
+    
+    <div class="overlay" id="overlay"></div>
+    <div class="popup" id="popup"></div>
+
+    <script>
+        const HANDS = [
+            ['AA','AKs','AQs','AJs','ATs','A9s','A8s','A7s','A6s','A5s','A4s','A3s','A2s'],
+            ['AKo','KK','KQs','KJs','KTs','K9s','K8s','K7s','K6s','K5s','K4s','K3s','K2s'],
+            ['AQo','KQo','QQ','QJs','QTs','Q9s','Q8s','Q7s','Q6s','Q5s','Q4s','Q3s','Q2s'],
+            ['AJo','KJo','QJo','JJ','JTs','J9s','J8s','J7s','J6s','J5s','J4s','J3s','J2s'],
+            ['ATo','KTo','QTo','JTo','TT','T9s','T8s','T7s','T6s','T5s','T4s','T3s','T2s'],
+            ['A9o','K9o','Q9o','J9o','T9o','99','98s','97s','96s','95s','94s','93s','92s'],
+            ['A8o','K8o','Q8o','J8o','T8o','98o','88','87s','86s','85s','84s','83s','82s'],
+            ['A7o','K7o','Q7o','J7o','T7o','97o','87o','77','76s','75s','74s','73s','72s'],
+            ['A6o','K6o','Q6o','J6o','T6o','96o','86o','76o','66','65s','64s','63s','62s'],
+            ['A5o','K5o','Q5o','J5o','T5o','95o','85o','75o','65o','55','54s','53s','52s'],
+            ['A4o','K4o','Q4o','J4o','T4o','94o','84o','74o','64o','54o','44','43s','42s'],
+            ['A3o','K3o','Q3o','J3o','T3o','93o','83o','73o','63o','53o','43o','33','32s'],
+            ['A2o','K2o','Q2o','J2o','T2o','92o','82o','72o','62o','52o','42o','32o','22']
+        ];
+
+        const ALL_ACTIONS = ['fold', 'limp', 'raise2x', 'raise6x', 'shove', 'call'];
+        const ACTION_LABELS = { fold: 'Fold', limp: 'Limp', raise2x: 'Raise 2x', raise6x: 'Raise 6x', shove: 'Shove', call: 'Call' };
+        const ACTION_COLORS = { fold: '#e74c3c', limp: '#3498db', raise2x: '#2ecc71', raise6x: '#f39c12', shove: '#9b59b6', call: '#1abc9c' };
+
+        let currentData = {};
+        let availableActions = [];
+
+        // Initialiser les profondeurs (24 à 2 par pas de 2)
+        function initDepths() {
+            const depthSelect = document.getElementById('depth');
+            depthSelect.innerHTML = '';
+            for (let d = 24; d >= 2; d -= 2) {
+                depthSelect.innerHTML += `<option value="${d}">${d} BB</option>`;
+            }
+        }
+
+        // Mise à jour des positions selon le nombre de joueurs
+        function updatePositions() {
+            const players = document.getElementById('players').value;
+            const myPosSelect = document.getElementById('myPos');
+            
+            if (players === '3') {
+                myPosSelect.innerHTML = `
+                    <option value="BTN">BTN</option>
+                    <option value="SB">SB</option>
+                    <option value="BB">BB</option>
+                `;
+            } else {
+                myPosSelect.innerHTML = `
+                    <option value="SB">SB</option>
+                    <option value="BB">BB</option>
+                `;
+            }
+            updateScenario();
+        }
+
+        // Gestion des scénarios selon la position
+        function updateScenario() {
+            const players = document.getElementById('players').value;
+            const myPos = document.getElementById('myPos').value;
+            
+            const btnActionGroup = document.getElementById('btnActionGroup');
+            const sbActionGroup = document.getElementById('sbActionGroup');
+            const sbActionHUGroup = document.getElementById('sbActionHUGroup');
+            
+            btnActionGroup.classList.add('hidden');
+            sbActionGroup.classList.add('hidden');
+            sbActionHUGroup.classList.add('hidden');
+            
+            if (players === '3') {
+                if (myPos === 'BTN') {
+                    // BTN: juste profondeur
+                    availableActions = ['fold', 'limp', 'raise2x', 'shove'];
+                } 
+                else if (myPos === 'SB') {
+                    // SB: choisir action BTN
+                    btnActionGroup.classList.remove('hidden');
+                    updateSBActions();
+                } 
+                else if (myPos === 'BB') {
+                    // BB: choisir action BTN puis SB
+                    btnActionGroup.classList.remove('hidden');
+                    updateBBScenario();
+                }
+            } else {
+                // Heads-Up
+                if (myPos === 'SB') {
+                    availableActions = ['fold', 'limp', 'raise2x', 'shove'];
+                } else {
+                    // BB en HU: choisir action SB
+                    sbActionHUGroup.classList.remove('hidden');
+                    updateBBHUActions();
+                }
+            }
+            
+            updateLegend();
+            loadRange();
+        }
+
+        // Actions disponibles pour SB en 3-way selon action BTN
+        function updateSBActions() {
+            const btnAction = document.getElementById('btnAction').value;
+            
+            if (btnAction === 'fold') {
+                availableActions = ['fold', 'limp', 'raise2x', 'shove'];
+            } else if (btnAction === 'limp') {
+                availableActions = ['fold', 'limp', 'raise2x', 'shove'];
+            } else if (btnAction === 'raise2x') {
+                availableActions = ['fold', 'call', 'raise6x', 'shove'];
+            } else if (btnAction === 'shove') {
+                availableActions = ['fold', 'call'];
+            }
+            
+            updateLegend();
+            loadRange();
+        }
+
+        // Scénario BB en 3-way: options SB selon action BTN
+        function updateBBScenario() {
+            const btnAction = document.getElementById('btnAction').value;
+            const sbActionGroup = document.getElementById('sbActionGroup');
+            const sbActionSelect = document.getElementById('sbAction');
+            
+            sbActionGroup.classList.remove('hidden');
+            
+            if (btnAction === 'fold') {
+                // BTN fold: SB peut limp, fold, raise2x ou shove
+                sbActionSelect.innerHTML = `
+                    <option value="limp">Limp</option>
+                    <option value="fold">Fold</option>
+                    <option value="raise2x">Raise 2x</option>
+                    <option value="shove">Shove</option>
+                `;
+            } else if (btnAction === 'limp') {
+                // BTN limp: SB peut fold, limp, raise2x ou shove
+                sbActionSelect.innerHTML = `
+                    <option value="fold">Fold</option>
+                    <option value="limp">Limp</option>
+                    <option value="raise2x">Raise 2x</option>
+                    <option value="shove">Shove</option>
+                `;
+            } else if (btnAction === 'raise2x') {
+                // BTN raise2x: SB peut fold, call, raise6x ou shove
+                sbActionSelect.innerHTML = `
+                    <option value="fold">Fold</option>
+                    <option value="call">Call</option>
+                    <option value="raise6x">Raise 6x</option>
+                    <option value="shove">Shove</option>
+                `;
+            } else if (btnAction === 'shove') {
+                // BTN shove: SB peut fold ou call
+                sbActionSelect.innerHTML = `
+                    <option value="fold">Fold</option>
+                    <option value="call">Call</option>
+                `;
+            }
+            
+            updateBBActions();
+        }
+
+        // Actions disponibles pour BB en 3-way
+        function updateBBActions() {
+            const btnAction = document.getElementById('btnAction').value;
+            const sbAction = document.getElementById('sbAction').value;
+            
+            // Si quelqu'un a shove
+            if (btnAction === 'shove' || sbAction === 'shove') {
+                availableActions = ['fold', 'call'];
+            }
+            // Si quelqu'un a raise6x (SB après BTN raise)
+            else if (sbAction === 'raise6x') {
+                availableActions = ['fold', 'call', 'shove'];
+            }
+            // Si BTN raise2x et SB fold ou call
+            else if (btnAction === 'raise2x') {
+                availableActions = ['fold', 'call', 'shove'];
+            }
+            // Si BTN limp et SB raise2x
+            else if (btnAction === 'limp' && sbAction === 'raise2x') {
+                availableActions = ['fold', 'call', 'raise6x', 'shove'];
+            }
+            // Si BTN fold et SB raise2x
+            else if (btnAction === 'fold' && sbAction === 'raise2x') {
+                availableActions = ['fold', 'call', 'raise6x', 'shove'];
+            }
+            // Sinon (limps ou fold devant)
+            else {
+                availableActions = ['fold', 'raise2x', 'raise6x', 'shove'];
+            }
+            
+            updateLegend();
+            loadRange();
+        }
+
+        // Actions BB en Heads-Up
+        function updateBBHUActions() {
+            const sbAction = document.getElementById('sbActionHU').value;
+            
+            if (sbAction === 'limp') {
+                availableActions = ['fold', 'raise2x', 'raise6x', 'shove'];
+            } else if (sbAction === 'raise2x') {
+                availableActions = ['fold', 'call', 'raise6x', 'shove'];
+            } else if (sbAction === 'shove') {
+                availableActions = ['fold', 'call'];
+            }
+            
+            updateLegend();
+            loadRange();
+        }
+
+        // Mise à jour de la légende
+        function updateLegend() {
+            document.querySelectorAll('.legend-item').forEach(item => {
+                const action = item.dataset.action;
+                item.classList.toggle('hidden', !availableActions.includes(action));
+            });
+        }
+
+        // Construction du nom de fichier
+        function getFilename() {
+            const players = document.getElementById('players').value;
+            const myPos = document.getElementById('myPos').value;
+            const depth = document.getElementById('depth').value;
+            
+            let filename = `ranges/${players}way_${myPos}`;
+            
+            if (players === '3') {
+                if (myPos === 'SB') {
+                    const btnAction = document.getElementById('btnAction').value;
+                    filename += `_btn${btnAction}`;
+                } else if (myPos === 'BB') {
+                    const btnAction = document.getElementById('btnAction').value;
+                    const sbAction = document.getElementById('sbAction').value;
+                    filename += `_btn${btnAction}_sb${sbAction}`;
+                }
+            } else {
+                if (myPos === 'BB') {
+                    const sbAction = document.getElementById('sbActionHU').value;
+                    filename += `_sb${sbAction}`;
+                }
+            }
+            
+            filename += `_${depth}bb.json`;
+            return filename;
+        }
+
+        async function loadRange() {
+            const filename = getFilename();
+            document.getElementById('scenarioInfo').textContent = `Fichier: ${filename}`;
+            
+            try {
+                const response = await fetch(filename);
+                currentData = await response.json();
+            } catch (e) {
+                currentData = {};
+            }
+            renderGrid();
+        }
+
+        // Détermination de l'action principale
+        function getMainAction(hand) {
+            const data = currentData[hand];
+            if (!data) return 'fold';
+            
+            let maxAction = 'fold', maxValue = 0;
+            for (const action of availableActions) {
+                if ((data[action] || 0) > maxValue) {
+                    maxValue = data[action];
+                    maxAction = action;
+                }
+            }
+            return maxAction;
+        }
+
+        // Rendu de la grille
+        function renderGrid() {
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+            
+            for (let row = 0; row < 13; row++) {
+                for (let col = 0; col < 13; col++) {
+                    const hand = HANDS[row][col];
+                    const cell = document.createElement('div');
+                    cell.className = `cell ${getMainAction(hand)}`;
+                    cell.textContent = hand;
+                    cell.dataset.hand = hand;
+                    cell.addEventListener('click', showPopup);
+                    grid.appendChild(cell);
+                }
+            }
+        }
+
+        // Affichage du popup
+        function showPopup(e) {
+            const hand = e.target.dataset.hand;
+            const data = currentData[hand] || {};
+            const popup = document.getElementById('popup');
+            const overlay = document.getElementById('overlay');
+            
+            let html = `<h4>${hand}</h4>`;
+            for (const action of availableActions) {
+                const value = data[action] || 0;
+                html += `
+                    <div class="popup-row">
+                        <span>${ACTION_LABELS[action]}</span>
+                        <span>${value}%</span>
+                    </div>
+                    <div class="popup-bar">
+                        <div class="popup-fill" style="width: ${value}%; background: ${ACTION_COLORS[action]}"></div>
+                    </div>
+                `;
+            }
+            
+            popup.innerHTML = html;
+            popup.classList.add('active');
+            overlay.classList.add('active');
+            
+            const rect = e.target.getBoundingClientRect();
+            popup.style.left = `${rect.right + 10}px`;
+            popup.style.top = `${rect.top}px`;
+        }
+
+        // Event listeners
+        document.getElementById('overlay').addEventListener('click', () => {
+            document.getElementById('popup').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        });
+
+        document.getElementById('players').addEventListener('change', updatePositions);
+        document.getElementById('myPos').addEventListener('change', updateScenario);
+        document.getElementById('btnAction').addEventListener('change', () => {
+            const myPos = document.getElementById('myPos').value;
+            if (myPos === 'SB') updateSBActions();
+            else updateBBScenario();
+        });
+        document.getElementById('sbAction').addEventListener('change', updateBBActions);
+        document.getElementById('sbActionHU').addEventListener('change', updateBBHUActions);
+        document.getElementById('depth').addEventListener('change', loadRange);
+
+        // Initialisation
+        initDepths();
+        updatePositions();
+    </script>
+</body>
+</html>
